@@ -1,227 +1,246 @@
-# แผนการทำ Auto Deployment
+I'll help you design a comprehensive deployment flow for your application on DigitalOcean. Here's a detailed breakdown:
 
-## 1. โครงสร้างโปรเจค
+### 1. Infrastructure Setup
+
+```mermaid
+graph TD
+    A[DigitalOcean Infrastructure] --> B[VPS Droplet]
+    B --> C[Nginx Reverse Proxy]
+    B --> D[Docker]
+    D --> E[Frontend Container]
+    D --> F[Backend Container]
+    D --> G[PostgreSQL Container]
+    D --> H[Redis Container]
+```
+
+### 2. Domain & DNS Configuration
+```plaintext
+example.com
+├── dev.example.com -> Development Environment
+└── example.com -> Production Environment
+```
+
+### 3. Repository Structure
 ```
 project/
 ├── frontend/
 │   ├── Dockerfile
-│   └── .env.development
+│   └── .env.{development,production}
 ├── backend/
 │   ├── Dockerfile
-│   └── .env.development
+│   └── .env.{development,production}
+├── nginx/
+│   └── nginx.conf
 ├── docker-compose.yml
-├── .github/workflows/
-│   └── deploy.yml
 └── scripts/
-    └── deploy.sh
+    ├── deploy-dev.sh
+    └── deploy-prod.sh
 ```
 
-## 2. Docker Configuration
+### 4. GitHub Actions Workflow
 
-### docker-compose.yml
+**Development Workflow** (.github/workflows/dev-deploy.yml)
 ```yaml
-version: '3'
+name: Development Deployment
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Deploy to Development
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USERNAME }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /opt/app
+            ./scripts/deploy-dev.sh
+```
+
+**Production Workflow** (.github/workflows/prod-deploy.yml)
+```yaml
+name: Production Deployment
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Deploy to Production
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USERNAME }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /opt/app
+            ./scripts/deploy-prod.sh
+```
+
+### 5. Deployment Scripts
+
+**deploy-dev.sh**
+```bash
+#!/bin/bash
+
+# Pull latest changes
+git pull origin develop
+
+# Load development environment variables
+set -a
+source .env.development
+set +a
+
+# Build and deploy containers
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml build
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Run migrations
+docker-compose exec backend npm run migrate
+```
+
+**deploy-prod.sh**
+```bash
+#!/bin/bash
+
+# Pull latest changes
+git fetch --tags
+git checkout $(git describe --tags --abbrev=0)
+
+# Load production environment variables
+set -a
+source .env.production
+set +a
+
+# Build and deploy containers
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Run migrations
+docker-compose exec backend npm run migrate
+```
+
+### 6. Docker Compose Configuration
+
+```yaml
+version: '3.8'
+
 services:
   frontend:
     build: ./frontend
-    ports:
-      - "3000:3000"
-    env_file: ./frontend/.env.development
+    restart: always
+    depends_on:
+      - backend
 
   backend:
     build: ./backend
-    ports:
-      - "1337:1337"
-    env_file: ./backend/.env.development
+    restart: always
     depends_on:
       - postgres
       - redis
 
   postgres:
-    image: postgres:latest
-    environment:
-      POSTGRES_DB: strapi
-      POSTGRES_USER: strapi
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    image: postgres:13
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
 
   redis:
-    image: redis:latest
-    ports:
-      - "6379:6379"
+    image: redis:6
     volumes:
       - redis_data:/data
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
 
 volumes:
   postgres_data:
   redis_data:
 ```
 
-## 3. GitHub Actions Workflow
+### 7. Nginx Configuration
 
-### .github/workflows/deploy.yml
-```yaml
-name: Deploy to Digital Ocean
+```nginx
+server {
+    listen 80;
+    server_name dev.example.com;
 
-on:
-  push:
-    branches: [ main ]
+    location / {
+        proxy_pass http://frontend:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
+    location /api {
+        proxy_pass http://backend:1337;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
 
-      - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known_hosts: ${{ secrets.KNOWN_HOSTS }}
-
-      - name: Deploy to Digital Ocean
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-          DO_HOST: ${{ secrets.DO_HOST }}
-        run: |
-          chmod +x ./scripts/deploy.sh
-          ./scripts/deploy.sh
+server {
+    listen 80;
+    server_name example.com;
+    # Similar configuration for production
+}
 ```
 
-## 4. Deployment Script
+### 8. Security Considerations
 
-### scripts/deploy.sh
-```bash
-#!/bin/bash
+1. SSL/TLS certificates using Let's Encrypt
+2. Environment variables stored as GitHub Secrets
+3. Firewall rules on DigitalOcean
+4. Regular database backups
+5. Rate limiting in Nginx
 
-# Login to Docker Hub
-echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+### 9. Monitoring & Logging
 
-# Build and push images
-docker-compose build
-docker-compose push
+1. Set up DigitalOcean monitoring
+2. Configure logging with Docker logging driver
+3. Implement application-level logging
+4. Set up alerts for critical events
 
-# Deploy to Digital Ocean
-ssh root@$DO_HOST << 'ENDSSH'
-cd /root/project
-docker-compose pull
-docker-compose down
-docker-compose up -d
-ENDSSH
-```
+This setup provides:
+- Automated deployments for both development and production
+- Isolated environments
+- Scalable infrastructure
+- Secure access to services
+- Easy rollback capability
+- Persistent data storage
+- Load balancing and reverse proxy
+- SSL/TLS support
 
-## 5. Digital Ocean Setup
-
-1. สร้าง Droplet
-```bash
-- Size: Basic Plan (4GB/2CPU)
-- Region: Singapore
-- OS: Ubuntu 20.04
-```
-
-2. ติดตั้ง Dependencies
-```bash
-apt update
-apt install -y docker.io docker-compose
-```
-
-## 6. Security & Environment Variables
-
-### GitHub Secrets ที่ต้องตั้งค่า
-```
-SSH_PRIVATE_KEY
-KNOWN_HOSTS
-DOCKER_USERNAME
-DOCKER_PASSWORD
-DO_HOST
-```
-
-### Environment Variables ที่ต้องกำหนด
-```
-# Frontend (.env.development)
-NEXT_PUBLIC_API_URL=
-NEXT_PUBLIC_SITE_URL=
-
-# Backend (.env.development)
-DATABASE_URL=
-REDIS_URL=
-JWT_SECRET=
-```
-
-## 7. การ Monitor และ Logging
-
-1. ติดตั้ง Monitoring Tools
-```bash
-# Prometheus + Grafana หรือ
-# Datadog
-```
-
-2. Log Management
-```bash
-# ELK Stack หรือ
-# Papertrail
-```
-
-## 8. Backup Strategy
-
-1. Database Backup
-```bash
-# สร้าง Cron job สำหรับ backup Postgres
-0 0 * * * pg_dump -U strapi > backup.sql
-```
-
-2. Volume Backup
-```bash
-# Backup Docker volumes
-0 0 * * * tar -czf backup.tar.gz /var/lib/docker/volumes
-```
-
-## 9. ขั้นตอนการทดสอบ
-
-1. ทดสอบ Local
-```bash
-docker-compose up --build
-```
-
-2. ทดสอบ CI/CD
-```bash
-- Push to feature branch
-- Create PR
-- Merge to main
-```
-
-## 10. การ Rollback
-
-1. สร้าง rollback script
-```bash
-./scripts/rollback.sh <version>
-```
-
-2. เก็บ Image Tags
-```bash
-docker tag app:latest app:v1.0.0
-```
-
-## คำแนะนำเพิ่มเติม
-
-1. **Security**
-- ใช้ HTTPS
-- ตั้งค่า Firewall
-- Regular Security Updates
-
-2. **Performance**
-- ใช้ Docker Layer Caching
-- Optimize Docker Images
-- CDN สำหรับ Frontend
-
-3. **Monitoring**
-- Set up Health Checks
-- Alert System
-- Performance Monitoring
-
-4. **Documentation**
-- Deployment Process
-- Troubleshooting Guide
-- Architecture Diagram
+Remember to:
+- Properly secure your environment variables
+- Regularly update dependencies
+- Monitor system resources
+- Implement proper backup strategies
+- Test deployments in development before production
