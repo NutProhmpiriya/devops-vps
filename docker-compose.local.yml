@@ -4,7 +4,7 @@ services:
   frontend:
     build:
       context: ../frontend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.local
     container_name: nextjs-frontend-local
     ports:
       - "3000:3000"
@@ -22,7 +22,7 @@ services:
   backend:
     build:
       context: ../backend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.local
     container_name: strapi-backend-local
     ports:
       - "1337:1337"
