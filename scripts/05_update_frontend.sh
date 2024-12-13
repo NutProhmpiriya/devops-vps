@@ -1,4 +1,4 @@
-!/bin/bash
+!/usr/bin/bash÷÷
 
 # # Pull the latest Docker image for the frontend
 # docker pull $DOCKERHUB_USERNAME/frontend:latest
