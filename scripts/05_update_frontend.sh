@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-source ../.env
+source /opt/apps/devops-vps/.env
 echo "DOCKERHUB_USERNAME: $DOCKERHUB_USERNAME"
 # Pull the latest Docker image for the frontend
 docker pull $DOCKERHUB_USERNAME/frontend:latest
