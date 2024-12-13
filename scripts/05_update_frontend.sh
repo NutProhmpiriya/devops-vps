@@ -7,3 +7,4 @@
 # docker run -d --name frontend-container $DOCKERHUB_USERNAME/frontend:latest
 
 touch textfile.txt
+echo "create file textfile.txt"
