@@ -44,7 +44,7 @@ This repository contains the infrastructure and deployment automation for a full
 ```
 
 # Development
-docker-compose -f docker-compose.dev.yml --env-file .env.development up
+docker compose -f docker-compose.dev.yml --env-file .env.development up -d
 
 # Production
-docker-compose -f docker-compose.prod.yml --env-file .env.production up
+docker-compose -f docker-compose.prod.yml --env-file .env.production up -d
